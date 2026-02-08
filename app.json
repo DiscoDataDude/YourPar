@@ -48,11 +48,6 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "e573d6f1-7efd-4692-875b-21d1bb6e1d3b"
-      }
-    }
+    "owner": "discodev"
   }
 }
