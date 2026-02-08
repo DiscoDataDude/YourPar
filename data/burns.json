@@ -1,0 +1,23 @@
+{
+  "courseName": "Burns Club",
+  "holes": [
+    { "hole": 1, "length": 465, "par": 5, "index": 12 },
+    { "hole": 2, "length": 307, "par": 4, "index": 11 },
+    { "hole": 3, "length": 154, "par": 3, "index": 14 },
+    { "hole": 4, "length": 387, "par": 4, "index": 5 },
+    { "hole": 5, "length": 181, "par": 3, "index": 10 },
+    { "hole": 6, "length": 392, "par": 4, "index": 3 },
+    { "hole": 7, "length": 305, "par": 4, "index": 15 },
+    { "hole": 8, "length": 478, "par": 5, "index": 7 },
+    { "hole": 9, "length": 448, "par": 5, "index": 8 },
+    { "hole": 10, "length": 312, "par": 4, "index": 16 },
+    { "hole": 11, "length": 381, "par": 4, "index": 4 },
+    { "hole": 12, "length": 309, "par": 4, "index": 13 },
+    { "hole": 13, "length": 408, "par": 4, "index": 1 },
+    { "hole": 14, "length": 118, "par": 3, "index": 18 },
+    { "hole": 15, "length": 340, "par": 4, "index": 9 },
+    { "hole": 16, "length": 385, "par": 4, "index": 2 },
+    { "hole": 17, "length": 480, "par": 5, "index": 6 },
+    { "hole": 18, "length": 134, "par": 3, "index": 17 }
+  ]
+}
