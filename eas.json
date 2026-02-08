@@ -6,13 +6,19 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "installCommand": "npm install --include=dev"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "installCommand": "npm install --include=dev"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "cache": {
+        "disabled": true
+      },
+      "installCommand": "npm install --include=dev"
     }
   },
   "submit": {
