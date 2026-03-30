@@ -15,27 +15,55 @@ import {
 } from '../utils/clubDistances';
 import { buildHoleStrategy } from '../utils/holeStrategy';
 import { getActiveCourse } from '../utils/courseUtils';
-import { typography } from '../constants/ui';
-import { getDistanceUnits, formatDistance } from '../utils/distanceUnits';
+import { typography, spacing } from '../constants/ui';
+import { getDistanceUnits, formatDistance, convertDistance, getUnitLabel } from '../utils/distanceUnits';
 import { Colors } from '../constants/theme';
 
 const STORAGE_DISTANCES = 'clubDistances';
 
-// -----------------------------------------------------
-// HOLE SCREEN COMPONENT
-// -----------------------------------------------------
+function ShotCard({ shot, index, units }) {
+  const unitLabel = getUnitLabel(units);
+  const displayDist = Math.round(convertDistance(shot.distance, units));
+  const displayEffective = Math.round(convertDistance(shot.effective, units));
+
+  return (
+    <View style={styles.shotCard}>
+      <View style={styles.shotNumberBadge}>
+        <Text style={styles.shotNumberText}>{index + 1}</Text>
+      </View>
+
+      <View style={styles.shotDetails}>
+        <Text style={styles.shotClub}>{shot.name}</Text>
+        {shot.partial ? (
+          <Text style={styles.shotMeta}>
+            {shot.pct}% swing · ~{displayEffective}{unitLabel}
+          </Text>
+        ) : (
+          <Text style={styles.shotMeta}>
+            Full swing · {displayDist}{unitLabel}
+          </Text>
+        )}
+      </View>
+
+      {index === 0 && (
+        <View style={styles.shotBadge}>
+          <Text style={styles.shotBadgeText}>Tee</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function HoleScreen() {
   const { targetScore, holeNumber } = useLocalSearchParams();
   const target = Number(targetScore ?? 99);
   const holeNo = Number(holeNumber ?? 1);
 
   const [hole, setHole] = useState(null);
-  const [favouriteClub, setFavouriteClub] = useState(null);
-  const [favouriteWedge, setFavouriteWedge] = useState(null);
-  const [useWedgeRegulation, setUseWedgeRegulation] = useState(true);
   const [strategy, setStrategy] = useState(null);
   const [loading, setLoading] = useState(true);
   const [units, setUnits] = useState('meters');
+  const [useWedgeRegulation, setUseWedgeRegulation] = useState(true);
 
   useEffect(() => {
     let mounted = true;
@@ -71,8 +99,6 @@ export default function HoleScreen() {
 
         if (!mounted) return;
 
-        setFavouriteClub(favClub);
-        setFavouriteWedge(favWedge);
         setUseWedgeRegulation(useWIR);
 
         if (foundHole && clubsArr.length > 0) {
@@ -100,55 +126,116 @@ export default function HoleScreen() {
     };
   }, [holeNo, target]);
 
-  if (!hole) {
-    return (
-      <View style={styles.centered}>
-        <Text>Could not find this hole.</Text>
-      </View>
-    );
-  }
-
-  if (loading || !strategy) {
+  if (loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator />
-        <Text>Loading hole strategy…</Text>
+        <Text style={styles.loadingText}>Building strategy…</Text>
       </View>
     );
   }
 
+  if (!hole) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>Could not find this hole.</Text>
+      </View>
+    );
+  }
+
+  const unitLabel = getUnitLabel(units);
+  const girDelta = strategy ? strategy.delta : 0;
+
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.holeTitle}>
-        Hole {hole.hole} – {formatDistance(hole.length, units)} (Par{' '}
-        {hole.myPar})
-      </Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
 
-      <Text style={styles.detail}>My Par: {hole.myPar}</Text>
-      <Text style={styles.detail}>My GIR: {hole.myGIR}</Text>
-
-      <View style={styles.strategySection}>
-        <Text style={styles.sectionTitle}>Recommended Strategy</Text>
-        <Text style={styles.helperText}>
-          This plan is built to maximise safe outcomes, not perfect shots.
-        </Text>
-        <Text style={styles.description}>{strategy.description}</Text>
+      {/* Hole header */}
+      <View style={styles.holeHeader}>
+        <View>
+          <Text style={styles.holeNumber}>Hole {hole.hole}</Text>
+          <Text style={styles.holeMeta}>
+            {formatDistance(hole.length, units)} · Par {hole.par}
+          </Text>
+        </View>
       </View>
 
-      <Text style={styles.footerHelper}>
-        If you find trouble, take your medicine and get back in play. One bad
-        swing doesn&apos;t mean the strategy failed.
-      </Text>
+      {/* Your Par stats */}
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Text style={styles.statValue}>{hole.myPar}</Text>
+          <Text style={styles.statLabel}>Your Par</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statCard}>
+          <Text style={styles.statValue}>{hole.myGIR}</Text>
+          <Text style={styles.statLabel}>Shots to green</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statCard}>
+          <Text style={styles.statValue}>
+            {formatDistance(hole.avgShot, units)}
+          </Text>
+          <Text style={styles.statLabel}>Avg shot</Text>
+        </View>
+      </View>
 
-      {favouriteClub && (
-        <Text style={styles.footer}>Favourite club: {favouriteClub}</Text>
+      {/* Strategy section */}
+      {strategy && strategy.path && strategy.path.length > 0 ? (
+        <View style={styles.strategySection}>
+          <Text style={styles.sectionTitle}>Your strategy</Text>
+
+          {/* WIR callout if active */}
+          {useWedgeRegulation && strategy.path.length > 1 && (
+            <View style={styles.wirCallout}>
+              <Text style={styles.wirCalloutText}>
+                Planned to leave a full wedge into the green
+              </Text>
+            </View>
+          )}
+
+          {/* Shot cards */}
+          {strategy.path.map((shot, i) => (
+            <ShotCard key={i} shot={shot} index={i} units={units} />
+          ))}
+
+          {/* Final shot label */}
+          <View style={styles.greenIndicator}>
+            <View style={styles.greenDot} />
+            <Text style={styles.greenLabel}>Green</Text>
+          </View>
+
+          {/* Delta callout */}
+          <View style={[
+            styles.deltaCard,
+            girDelta > 0 && styles.deltaCardPositive,
+            girDelta < 0 && styles.deltaCardNegative,
+          ]}>
+            <Text style={styles.deltaText}>
+              {girDelta > 0
+                ? `You reach the green ${girDelta} shot${girDelta > 1 ? 's' : ''} inside your plan. You have buffer — use it wisely.`
+                : girDelta === 0
+                  ? 'You reach the green right on plan. Stay disciplined and two-putt.'
+                  : `This hole is tight. Stay patient and avoid compounding errors.`}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.strategySection}>
+          <Text style={styles.sectionTitle}>Your strategy</Text>
+          <Text style={styles.noStrategyText}>
+            Set your club distances to get a strategy for this hole.
+          </Text>
+        </View>
       )}
-      {favouriteWedge && (
-        <Text style={styles.footer}>Favourite wedge: {favouriteWedge}</Text>
-      )}
-      <Text style={styles.footer}>
-        Wedge in Regulation: {useWedgeRegulation ? 'On' : 'Off'}
-      </Text>
+
+      {/* Footer tip */}
+      <View style={styles.footerTip}>
+        <Text style={styles.footerTipText}>
+          If you find trouble, take your medicine and get back in play. One bad
+          swing doesn't mean the hole is lost.
+        </Text>
+      </View>
+
     </ScrollView>
   );
 }
@@ -156,68 +243,235 @@ export default function HoleScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 24,
     backgroundColor: Colors.light.background,
+  },
+  content: {
+    padding: spacing.l,
+    paddingBottom: spacing.xl * 2,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.light.background,
+    gap: spacing.s,
   },
-  holeTitle: {
-    fontSize: 26,
+  loadingText: {
+    fontSize: 15,
+    color: Colors.light.textSecondary,
+    fontFamily: typography.body.fontFamily,
+  },
+  errorText: {
+    fontSize: 15,
+    color: Colors.light.textSecondary,
+    fontFamily: typography.body.fontFamily,
+  },
+
+  // Header
+  holeHeader: {
+    marginBottom: spacing.l,
+  },
+  holeNumber: {
+    fontSize: 32,
     fontWeight: '700',
-    fontFamily: typography.titleL.fontFamily,
-    marginBottom: 16,
+    fontFamily: typography.titleXL.fontFamily,
     color: Colors.light.text,
-  },
-  detail: {
-    fontSize: 17,
-    fontWeight: '400',
-    fontFamily: typography.titleM.fontFamily,
     marginBottom: 4,
-    color: Colors.light.textSecondary,
   },
-  strategySection: {
-    marginTop: 24,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    fontFamily: typography.titleM.fontFamily,
-    marginBottom: 12,
-    color: Colors.light.text,
-  },
-  helperText: {
-    fontSize: 14,
-    fontWeight: '400',
-    fontFamily: typography.meta.fontFamily,
-    color: Colors.light.textSecondary,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  description: {
-    fontSize: 17,
+  holeMeta: {
+    fontSize: 15,
     fontWeight: '400',
     fontFamily: typography.body.fontFamily,
-    lineHeight: 24,
-    color: Colors.light.text,
+    color: Colors.light.textSecondary,
   },
-  footerHelper: {
+
+  // Stats row
+  statsRow: {
+    flexDirection: 'row',
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    marginBottom: spacing.l,
+    paddingVertical: spacing.m,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  statCard: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: '700',
+    fontFamily: typography.titleXL.fontFamily,
+    color: Colors.light.primary,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    textAlign: 'center',
+  },
+  statDivider: {
+    width: 1,
+    backgroundColor: Colors.light.border,
+    marginVertical: 4,
+  },
+
+  // Strategy section
+  strategySection: {
+    marginBottom: spacing.l,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    fontFamily: typography.titleM.fontFamily,
+    color: Colors.light.text,
+    marginBottom: spacing.m,
+  },
+
+  // WIR callout
+  wirCallout: {
+    backgroundColor: Colors.light.primarySoft,
+    borderRadius: 8,
+    paddingVertical: spacing.s,
+    paddingHorizontal: spacing.m,
+    marginBottom: spacing.m,
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.light.primary,
+  },
+  wirCalloutText: {
+    fontSize: 13,
+    fontWeight: '500',
+    fontFamily: typography.body.fontFamily,
+    color: Colors.light.primary,
+  },
+
+  // Shot cards
+  shotCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.light.card,
+    borderRadius: 10,
+    padding: spacing.m,
+    marginBottom: spacing.s,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  shotNumberBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.light.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.m,
+  },
+  shotNumberText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  shotDetails: {
+    flex: 1,
+  },
+  shotClub: {
+    fontSize: 17,
+    fontWeight: '600',
+    fontFamily: typography.body.fontFamily,
+    color: Colors.light.text,
+    marginBottom: 2,
+  },
+  shotMeta: {
+    fontSize: 13,
+    fontWeight: '400',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+  },
+  shotBadge: {
+    backgroundColor: Colors.light.border,
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  shotBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.light.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+
+  // Green indicator
+  greenIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: spacing.s,
+    marginBottom: spacing.m,
+    marginTop: spacing.xs,
+  },
+  greenDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#4A8C5C',
+    marginRight: spacing.s,
+  },
+  greenLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#4A8C5C',
+    fontFamily: typography.body.fontFamily,
+  },
+
+  // Delta card
+  deltaCard: {
+    borderRadius: 8,
+    paddingVertical: spacing.m,
+    paddingHorizontal: spacing.m,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  deltaCardPositive: {
+    backgroundColor: Colors.light.primarySoft,
+    borderColor: Colors.light.primary,
+  },
+  deltaCardNegative: {
+    backgroundColor: Colors.light.card,
+    borderColor: Colors.light.border,
+  },
+  deltaText: {
     fontSize: 14,
+    fontWeight: '400',
+    fontFamily: typography.body.fontFamily,
+    color: Colors.light.text,
+    lineHeight: 20,
+  },
+
+  // No strategy
+  noStrategyText: {
+    fontSize: 15,
+    fontWeight: '400',
+    fontFamily: typography.body.fontFamily,
+    color: Colors.light.textSecondary,
+    lineHeight: 22,
+  },
+
+  // Footer tip
+  footerTip: {
+    paddingTop: spacing.m,
+    borderTopWidth: 1,
+    borderTopColor: Colors.light.border,
+  },
+  footerTipText: {
+    fontSize: 13,
     fontWeight: '400',
     fontFamily: typography.meta.fontFamily,
     color: Colors.light.textSecondary,
     lineHeight: 20,
-    marginTop: 24,
-    marginBottom: 16,
-  },
-  footer: {
-    fontSize: 14,
-    fontWeight: '400',
-    fontFamily: typography.meta.fontFamily,
-    color: Colors.light.textSecondary,
-    marginTop: 8,
   },
 });
