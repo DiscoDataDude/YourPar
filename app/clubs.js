@@ -86,7 +86,6 @@ export default function ClubsScreen() {
         const stored = JSON.parse(json);
         normalised = normaliseClubDistances(stored);
 
-        // Check if distances object is empty or missing
         const hasDistances =
           normalised.distances && Object.keys(normalised.distances).length > 0;
         needsDefaults = !hasDistances;
@@ -94,7 +93,6 @@ export default function ClubsScreen() {
         needsDefaults = true;
       }
 
-      // If no data or empty distances, create and save defaults
       if (needsDefaults) {
         const defaultPayload = {
           distances: DEFAULT_DISTANCES,
@@ -113,7 +111,6 @@ export default function ClubsScreen() {
         setFavouriteWedge(null);
         setUseWedgeRegulation(true);
       } else {
-        // Merge with defaults so UI shows all clubs
         const merged = {};
         DEFAULT_CLUB_ORDER.forEach((name) => {
           const val = normalised.distances?.[name];
@@ -137,23 +134,19 @@ export default function ClubsScreen() {
     loadData();
   }, []);
 
-  // Reload when screen gains focus to pick up unit changes from settings
   useFocusEffect(
     React.useCallback(() => {
       loadData();
     }, []),
   );
 
-  // Save to storage
   async function saveData(next = {}) {
     const nextDistances = next.distances ?? distances;
 
-    // Clean + canonicalise distances
     const cleanedDistances = {};
     DEFAULT_CLUB_ORDER.forEach((name) => {
       const raw = nextDistances[name];
       const num = Number(raw);
-
       if (!Number.isNaN(num) && num > 0) {
         cleanedDistances[name] = num;
       }
@@ -163,12 +156,10 @@ export default function ClubsScreen() {
       distances: cleanedDistances,
       favouriteClub:
         'favouriteClub' in next ? next.favouriteClub : (favouriteClub ?? null),
-
       favouriteWedge:
         'favouriteWedge' in next
           ? next.favouriteWedge
           : (favouriteWedge ?? null),
-
       useWedgeRegulation:
         typeof next.useWedgeRegulation === 'boolean'
           ? next.useWedgeRegulation
@@ -178,12 +169,10 @@ export default function ClubsScreen() {
     await AsyncStorage.setItem(STORAGE_DISTANCES, JSON.stringify(payload));
   }
 
-  // Update distance field - convert from display units to meters for storage
   const handleDistanceChange = (clubName, value) => {
     const numValue = Number(value);
     let metersValue = value;
 
-    // If user entered a number and we're showing yards, convert back to meters
     if (!isNaN(numValue) && numValue > 0 && units === 'yards') {
       metersValue = yardsToMeters(numValue);
     }
@@ -193,7 +182,6 @@ export default function ClubsScreen() {
     saveData({ distances: updated });
   };
 
-  // Get display value for a distance (convert from meters to current units)
   const getDisplayValue = (metersValue) => {
     if (!metersValue) return '';
     const meters = Number(metersValue);
@@ -212,7 +200,6 @@ export default function ClubsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Save default distances to storage
               const defaultPayload = {
                 distances: DEFAULT_DISTANCES,
                 favouriteClub,
@@ -223,7 +210,6 @@ export default function ClubsScreen() {
                 STORAGE_DISTANCES,
                 JSON.stringify(defaultPayload),
               );
-              // Reload data to update UI
               await loadData();
             } catch (e) {
               console.error('Error resetting to defaults:', e);
@@ -265,9 +251,8 @@ export default function ClubsScreen() {
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Your Club Distances</Text>
       <Text style={styles.hint}>
-        These are starter distances for average mid-to-high handicappers. They
-        help you get going right away. As you play, adjust them to match your
-        real carry distance (not roll).
+        These are starter distances for average mid-to-high handicappers. Adjust
+        them to match your real carry distance (not roll).
       </Text>
 
       {/* WIR Toggle */}
@@ -291,66 +276,122 @@ export default function ClubsScreen() {
       {/* Wedges Section */}
       <Text style={styles.sectionHeader}>Wedges</Text>
       <Text style={styles.helperText}>
-        Favourite wedge = the wedge you&apos;re happiest hitting a full shot
-        with.
+        Mark your go-to wedge — the one you&apos;re most confident hitting a
+        full shot with. The app uses this when planning your approach into the
+        green.
       </Text>
-      {wedgeClubs.length === 0 && (
-        <Text style={styles.emptyText}>Enter wedge distances below</Text>
-      )}
 
-      {wedgeClubs.map((clubName) => (
-        <View key={clubName} style={styles.clubRow}>
-          <TouchableOpacity
-            style={[
-              styles.favButton,
-              favouriteWedge === clubName && styles.favSelected,
-            ]}
-            onPress={() => toggleFavouriteWedge(clubName)}
+      <View style={styles.columnHeader}>
+        <Text style={[styles.columnLabel, { flex: 1 }]}>Club</Text>
+        <Text style={[styles.columnLabel, { width: 80, textAlign: 'center' }]}>
+          Distance ({getUnitLabel(units)})
+        </Text>
+        <Text style={[styles.columnLabel, { width: 100, textAlign: 'center' }]}>
+          Go-to wedge
+        </Text>
+      </View>
+
+      {wedgeClubs.map((clubName) => {
+        const isSelected = favouriteWedge === clubName;
+        return (
+          <View
+            key={clubName}
+            style={[styles.clubRow, isSelected && styles.clubRowSelected]}
           >
-            <Text style={styles.favText}>★</Text>
-          </TouchableOpacity>
+            <Text style={[styles.clubLabel, { flex: 1 }]}>{clubName}</Text>
 
-          <Text style={styles.clubLabel}>{clubName}</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              placeholder="—"
+              value={getDisplayValue(distances[clubName])}
+              onChangeText={(val) => handleDistanceChange(clubName, val)}
+            />
 
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            placeholder={getUnitLabel(units)}
-            value={getDisplayValue(distances[clubName])}
-            onChangeText={(val) => handleDistanceChange(clubName, val)}
-          />
-        </View>
-      ))}
+            <TouchableOpacity
+              style={[
+                styles.favouriteBadge,
+                isSelected
+                  ? styles.favouriteBadgeSelected
+                  : styles.favouriteBadgeUnselected,
+              ]}
+              onPress={() => toggleFavouriteWedge(clubName)}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={
+                  isSelected
+                    ? styles.favouriteBadgeTextSelected
+                    : styles.favouriteBadgeTextUnselected
+                }
+              >
+                {isSelected ? 'My wedge' : 'Select'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
 
-      {/* Other Clubs Section */}
-      <Text style={styles.sectionHeader}>Irons / Woods</Text>
+      {/* Irons / Woods Section */}
+      <Text style={[styles.sectionHeader, { marginTop: 32 }]}>
+        Irons / Woods
+      </Text>
       <Text style={styles.helperText}>
-        Favourite club = the club you trust most under pressure.
+        Mark the club you trust most under pressure. When the strategy engine
+        has a choice, it will prefer this club over others at a similar
+        distance.
       </Text>
 
-      {otherClubs.map((clubName) => (
-        <View key={clubName} style={styles.clubRow}>
-          <TouchableOpacity
-            style={[
-              styles.favButton,
-              favouriteClub === clubName && styles.favSelected,
-            ]}
-            onPress={() => toggleFavouriteClub(clubName)}
+      <View style={styles.columnHeader}>
+        <Text style={[styles.columnLabel, { flex: 1 }]}>Club</Text>
+        <Text style={[styles.columnLabel, { width: 80, textAlign: 'center' }]}>
+          Distance ({getUnitLabel(units)})
+        </Text>
+        <Text style={[styles.columnLabel, { width: 100, textAlign: 'center' }]}>
+          Go-to club
+        </Text>
+      </View>
+
+      {otherClubs.map((clubName) => {
+        const isSelected = favouriteClub === clubName;
+        return (
+          <View
+            key={clubName}
+            style={[styles.clubRow, isSelected && styles.clubRowSelected]}
           >
-            <Text style={styles.favText}>★</Text>
-          </TouchableOpacity>
+            <Text style={[styles.clubLabel, { flex: 1 }]}>{clubName}</Text>
 
-          <Text style={styles.clubLabel}>{clubName}</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              placeholder="—"
+              value={getDisplayValue(distances[clubName])}
+              onChangeText={(val) => handleDistanceChange(clubName, val)}
+            />
 
-          <TextInput
-            style={styles.input}
-            keyboardType="numeric"
-            placeholder={getUnitLabel(units)}
-            value={getDisplayValue(distances[clubName])}
-            onChangeText={(val) => handleDistanceChange(clubName, val)}
-          />
-        </View>
-      ))}
+            <TouchableOpacity
+              style={[
+                styles.favouriteBadge,
+                isSelected
+                  ? styles.favouriteBadgeSelected
+                  : styles.favouriteBadgeUnselected,
+              ]}
+              onPress={() => toggleFavouriteClub(clubName)}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={
+                  isSelected
+                    ? styles.favouriteBadgeTextSelected
+                    : styles.favouriteBadgeTextUnselected
+                }
+              >
+                {isSelected ? 'My club' : 'Select'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
 
       <View style={styles.resetSection}>
         <PrimaryButton
@@ -366,7 +407,11 @@ export default function ClubsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, backgroundColor: Colors.light.background },
+  container: {
+    flex: 1,
+    padding: 24,
+    backgroundColor: Colors.light.background,
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',
@@ -404,68 +449,103 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     fontFamily: typography.titleM.fontFamily,
-    marginTop: 24,
-    marginBottom: 12,
+    marginTop: 8,
+    marginBottom: 8,
     color: Colors.light.text,
+  },
+
+  columnHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+
+  columnLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   clubRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+
+  clubRowSelected: {
+    borderColor: Colors.light.primary,
+    backgroundColor: Colors.light.primarySoft,
   },
 
   clubLabel: {
-    width: 60,
     fontSize: 17,
-    fontWeight: '400',
+    fontWeight: '500',
     fontFamily: typography.body.fontFamily,
     color: Colors.light.text,
   },
 
   input: {
-    marginLeft: 16,
+    width: 80,
     borderWidth: 1,
     borderColor: Colors.light.border,
-    backgroundColor: Colors.light.card,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    width: 80,
-    fontSize: 17,
-    fontWeight: '400',
+    backgroundColor: Colors.light.background,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    fontSize: 16,
     fontFamily: typography.body.fontFamily,
     color: Colors.light.text,
+    textAlign: 'center',
+    marginRight: 12,
   },
 
-  favButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  favouriteBadge: {
+    width: 88,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 16,
     borderWidth: 1,
+  },
+
+  favouriteBadgeSelected: {
+    backgroundColor: Colors.light.primary,
+    borderColor: Colors.light.primary,
+  },
+
+  favouriteBadgeUnselected: {
+    backgroundColor: 'transparent',
     borderColor: Colors.light.border,
-    backgroundColor: Colors.light.card,
   },
 
-  favSelected: {
-    backgroundColor: '#ffd700',
-    borderColor: '#ffb700',
-  },
-
-  favText: {
-    fontSize: 18,
+  favouriteBadgeTextSelected: {
+    fontSize: 13,
     fontWeight: '600',
-    color: Colors.light.text,
+    color: '#FFFFFF',
+  },
+
+  favouriteBadgeTextUnselected: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: Colors.light.textSecondary,
   },
 
   toggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 8,
   },
 
   toggleLabel: {
@@ -475,13 +555,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 16,
     color: Colors.light.text,
-  },
-
-  emptyText: {
-    fontSize: 14,
-    fontWeight: '400',
-    color: Colors.light.textSecondary,
-    marginBottom: 12,
   },
 
   resetSection: {
