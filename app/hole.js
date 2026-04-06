@@ -1,14 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ActivityIndicator,
   ScrollView,
+  FlatList,
+  Pressable,
+  Animated,
+  useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useLocalSearchParams } from 'expo-router';
-import { calculateMyPar } from '../utils/strategy';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { calculateYourPar } from '../utils/strategy';
 import {
   normaliseClubDistances,
   distancesToClubsArray,
@@ -16,10 +20,19 @@ import {
 import { buildHoleStrategy } from '../utils/holeStrategy';
 import { getActiveCourse } from '../utils/courseUtils';
 import { typography, spacing } from '../constants/ui';
-import { getDistanceUnits, formatDistance, convertDistance, getUnitLabel } from '../utils/distanceUnits';
+import {
+  getDistanceUnits,
+  formatDistance,
+  convertDistance,
+  getUnitLabel,
+} from '../utils/distanceUnits';
 import { Colors } from '../constants/theme';
 
 const STORAGE_DISTANCES = 'clubDistances';
+const MIN_SCORE = 1;
+const MAX_SCORE = 15;
+
+// ─── Shot card (unchanged) ────────────────────────────────────────────────────
 
 function ShotCard({ shot, index, units }) {
   const unitLabel = getUnitLabel(units);
@@ -31,7 +44,6 @@ function ShotCard({ shot, index, units }) {
       <View style={styles.shotNumberBadge}>
         <Text style={styles.shotNumberText}>{index + 1}</Text>
       </View>
-
       <View style={styles.shotDetails}>
         <Text style={styles.shotClub}>{shot.name}</Text>
         {shot.partial ? (
@@ -44,7 +56,6 @@ function ShotCard({ shot, index, units }) {
           </Text>
         )}
       </View>
-
       {index === 0 && (
         <View style={styles.shotBadge}>
           <Text style={styles.shotBadgeText}>Tee</Text>
@@ -54,17 +65,145 @@ function ShotCard({ shot, index, units }) {
   );
 }
 
-export default function HoleScreen() {
-  const { targetScore, holeNumber } = useLocalSearchParams();
-  const target = Number(targetScore ?? 99);
-  const holeNo = Number(holeNumber ?? 1);
+// ─── Score stepper ────────────────────────────────────────────────────────────
 
-  const [hole, setHole] = useState(null);
-  const [strategy, setStrategy] = useState(null);
+function ScoreStepper({ yourPar, score, onScoreChange }) {
+  const hasScore = score != null;
+
+  const decrement = () => {
+    const from = hasScore ? score : yourPar;
+    onScoreChange(Math.max(MIN_SCORE, from - 1));
+  };
+
+  const increment = () => {
+    const from = hasScore ? score : yourPar;
+    onScoreChange(Math.min(MAX_SCORE, from + 1));
+  };
+
+  const isAtYourPar = hasScore && score === yourPar;
+  const delta = hasScore ? score - yourPar : null;
+  const deltaLabel =
+    delta === null ? null : delta === 0 ? 'E' : delta > 0 ? `+${delta}` : `${delta}`;
+  const deltaColor =
+    delta === null
+      ? Colors.light.textSecondary
+      : delta < 0
+        ? '#4A8C5C'
+        : delta > 0
+          ? Colors.light.danger
+          : Colors.light.textSecondary;
+
+  return (
+    <View style={styles.scoreSection}>
+      <Text style={styles.scoreSectionTitle}>Score this hole</Text>
+      <View style={styles.scoreRow}>
+        {/* Your Par shortcut */}
+        <Pressable
+          style={[styles.parShortcut, isAtYourPar && styles.parShortcutActive]}
+          onPress={() => onScoreChange(yourPar)}
+        >
+          <Text
+            style={[
+              styles.parShortcutLabel,
+              isAtYourPar && styles.parShortcutLabelActive,
+            ]}
+          >
+            Your Par
+          </Text>
+          <Text
+            style={[
+              styles.parShortcutValue,
+              isAtYourPar && styles.parShortcutValueActive,
+            ]}
+          >
+            {yourPar}
+          </Text>
+        </Pressable>
+
+        {/* Stepper */}
+        <View style={styles.stepper}>
+          <Pressable
+            style={[
+              styles.stepBtn,
+              hasScore && score <= MIN_SCORE && styles.stepBtnDisabled,
+            ]}
+            onPress={decrement}
+          >
+            <Text style={styles.stepBtnText}>−</Text>
+          </Pressable>
+
+          <View style={styles.scoreDisplay}>
+            <Text style={styles.scoreDisplayText}>
+              {hasScore ? score : '—'}
+            </Text>
+            {deltaLabel !== null && (
+              <Text style={[styles.scoreDelta, { color: deltaColor }]}>
+                {deltaLabel}
+              </Text>
+            )}
+          </View>
+
+          <Pressable
+            style={[
+              styles.stepBtn,
+              hasScore && score >= MAX_SCORE && styles.stepBtnDisabled,
+            ]}
+            onPress={increment}
+          >
+            <Text style={styles.stepBtnText}>+</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function HoleScreen() {
+  const { targetScore, startIndex: startIndexParam, holeRange } =
+    useLocalSearchParams();
+  const target = Number(targetScore ?? 99);
+  const startIndex = Number(startIndexParam ?? 0);
+  const range = holeRange ?? 'all';
+
+  const navigation = useNavigation();
+  const { width: screenWidth } = useWindowDimensions();
+
+  const [holes, setHoles] = useState([]);
+  const [strategies, setStrategies] = useState({});
+  const [scores, setScores] = useState({});
   const [loading, setLoading] = useState(true);
   const [units, setUnits] = useState('meters');
   const [useWedgeRegulation, setUseWedgeRegulation] = useState(true);
+  const [currentIndex, setCurrentIndex] = useState(startIndex);
 
+  const flatListRef = useRef(null);
+  const swipeHintOpacity = useRef(new Animated.Value(1)).current;
+
+  // Fade-out swipe hint after 2 s
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.timing(swipeHintOpacity, {
+        toValue: 0,
+        duration: 800,
+        useNativeDriver: true,
+      }).start();
+    }, 2000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Dynamic header title
+  useEffect(() => {
+    if (holes.length > 0 && holes[currentIndex]) {
+      const h = holes[currentIndex];
+      navigation.setOptions({
+        title: `Hole ${currentIndex + 1} of ${holes.length} · Par ${h.par}`,
+      });
+    }
+  }, [currentIndex, holes, navigation]);
+
+  // Load all holes + build strategies
   useEffect(() => {
     let mounted = true;
 
@@ -74,12 +213,32 @@ export default function HoleScreen() {
           getActiveCourse(),
           getDistanceUnits(),
         ]);
-        const holes = calculateMyPar(activeCourse, target);
-        const foundHole = holes.find((h) => h.hole === holeNo);
+
+        const filteredCourseHoles =
+          range === 'front'
+            ? activeCourse.holes.filter((h) => h.hole >= 1 && h.hole <= 9)
+            : range === 'back'
+              ? activeCourse.holes.filter((h) => h.hole >= 10 && h.hole <= 18)
+              : activeCourse.holes;
+
+        const fullCoursePar = activeCourse.holes.reduce(
+          (sum, h) => sum + h.par,
+          0,
+        );
+        const filteredPar = filteredCourseHoles.reduce(
+          (sum, h) => sum + h.par,
+          0,
+        );
+        const scaledTarget =
+          range === 'all'
+            ? target
+            : Math.round(target * (filteredPar / fullCoursePar));
+
+        const filteredCourse = { ...activeCourse, holes: filteredCourseHoles };
+        const allHoles = calculateYourPar(filteredCourse, scaledTarget);
 
         if (!mounted) return;
-
-        setHole(foundHole);
+        setHoles(allHoles);
         setUnits(currentUnits);
 
         const json = await AsyncStorage.getItem(STORAGE_DISTANCES);
@@ -87,31 +246,30 @@ export default function HoleScreen() {
           if (mounted) setLoading(false);
           return;
         }
+
         const stored = JSON.parse(json);
         const normalised = normaliseClubDistances(stored);
-
-        const distData = normalised.distances;
-        const favClub = normalised.favouriteClub;
-        const favWedge = normalised.favouriteWedge;
-        const useWIR = normalised.useWedgeRegulation;
-
-        const clubsArr = distancesToClubsArray(distData);
+        const clubsArr = distancesToClubsArray(normalised.distances);
+        const { favouriteClub, favouriteWedge, useWedgeRegulation: useWIR } =
+          normalised;
 
         if (!mounted) return;
-
         setUseWedgeRegulation(useWIR);
 
-        if (foundHole && clubsArr.length > 0) {
-          const res = buildHoleStrategy(
-            foundHole.length,
-            foundHole.myGIR,
-            clubsArr,
-            favClub,
-            favWedge,
-            useWIR,
-            currentUnits,
-          );
-          setStrategy(res);
+        if (clubsArr.length > 0) {
+          const map = {};
+          for (const h of allHoles) {
+            map[h.hole] = buildHoleStrategy(
+              h.length,
+              h.yourGIR,
+              clubsArr,
+              favouriteClub,
+              favouriteWedge,
+              useWIR,
+              currentUnits,
+            );
+          }
+          if (mounted) setStrategies(map);
         }
       } catch (e) {
         console.error('HoleScreen load error:', e);
@@ -124,7 +282,138 @@ export default function HoleScreen() {
     return () => {
       mounted = false;
     };
-  }, [holeNo, target]);
+  }, [target, range]);
+
+  const handleScoreChange = useCallback((holeNum, value) => {
+    setScores((prev) => ({ ...prev, [holeNum]: value }));
+  }, []);
+
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+      setCurrentIndex(viewableItems[0].index ?? 0);
+    }
+  }).current;
+
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 50,
+  }).current;
+
+  const getItemLayout = useCallback(
+    (_, index) => ({
+      length: screenWidth,
+      offset: screenWidth * index,
+      index,
+    }),
+    [screenWidth],
+  );
+
+  const renderItem = useCallback(
+    ({ item: hole }) => {
+      const strategy = strategies[hole.hole];
+      const score = scores[hole.hole] ?? null;
+      const girDelta = strategy ? strategy.delta : 0;
+
+      return (
+        <ScrollView
+          style={[styles.page, { width: screenWidth }]}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Hole header */}
+          <View style={styles.holeHeader}>
+            <View>
+              <Text style={styles.holeNumber}>Hole {hole.hole}</Text>
+              <Text style={styles.holeMeta}>
+                {formatDistance(hole.length, units)} · Par {hole.par}
+              </Text>
+            </View>
+          </View>
+
+          {/* Stats row */}
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{hole.yourPar}</Text>
+              <Text style={styles.statLabel}>Your Par</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{hole.yourGIR}</Text>
+              <Text style={styles.statLabel}>Shots to green</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>
+                {formatDistance(hole.avgShot, units)}
+              </Text>
+              <Text style={styles.statLabel}>Avg shot</Text>
+            </View>
+          </View>
+
+          {/* Strategy */}
+          {strategy && strategy.path && strategy.path.length > 0 ? (
+            <View style={styles.strategySection}>
+              <Text style={styles.sectionTitle}>Your strategy</Text>
+              {useWedgeRegulation && strategy.path.length > 1 && (
+                <View style={styles.wirCallout}>
+                  <Text style={styles.wirCalloutText}>
+                    Planned to leave a full wedge into the green
+                  </Text>
+                </View>
+              )}
+              {strategy.path.map((shot, i) => (
+                <ShotCard key={i} shot={shot} index={i} units={units} />
+              ))}
+              <View style={styles.greenIndicator}>
+                <View style={styles.greenDot} />
+                <Text style={styles.greenLabel}>Green</Text>
+              </View>
+              <View
+                style={[
+                  styles.deltaCard,
+                  girDelta > 0 && styles.deltaCardPositive,
+                  girDelta < 0 && styles.deltaCardNegative,
+                ]}
+              >
+                <Text style={styles.deltaText}>
+                  {girDelta > 0
+                    ? `You reach the green ${girDelta} shot${girDelta > 1 ? 's' : ''} inside your plan. You have buffer — use it wisely.`
+                    : girDelta === 0
+                      ? 'You reach the green right on plan. Stay disciplined and two-putt.'
+                      : 'This hole is tight. Stay patient and avoid compounding errors.'}
+                </Text>
+              </View>
+              <Text style={styles.strategyDisclaimer}>
+                Strategy assumes flat terrain and no wind. Club up for uphill shots or into a strong headwind, and down for downhill or downwind.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.strategySection}>
+              <Text style={styles.sectionTitle}>Your strategy</Text>
+              <Text style={styles.noStrategyText}>
+                Set your club distances to get a strategy for this hole.
+              </Text>
+            </View>
+          )}
+
+          {/* Score entry */}
+          <ScoreStepper
+            yourPar={hole.yourPar}
+            score={score}
+            onScoreChange={(val) => handleScoreChange(hole.hole, val)}
+          />
+
+          {/* Footer tip */}
+          <View style={styles.footerTip}>
+            <Text style={styles.footerTipText}>
+              If you find trouble, take your medicine and get back in play. One
+              bad swing doesn't mean the hole is lost.
+            </Text>
+          </View>
+        </ScrollView>
+      );
+    },
+    [strategies, scores, units, useWedgeRegulation, screenWidth, handleScoreChange],
+  );
 
   if (loading) {
     return (
@@ -135,113 +424,50 @@ export default function HoleScreen() {
     );
   }
 
-  if (!hole) {
+  if (holes.length === 0) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Could not find this hole.</Text>
+        <Text style={styles.errorText}>Could not load holes.</Text>
       </View>
     );
   }
 
-  const unitLabel = getUnitLabel(units);
-  const girDelta = strategy ? strategy.delta : 0;
-
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={styles.container}>
+      <FlatList
+        ref={flatListRef}
+        data={holes}
+        keyExtractor={(item) => item.hole.toString()}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        renderItem={renderItem}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        getItemLayout={getItemLayout}
+        initialScrollIndex={startIndex}
+        style={styles.container}
+      />
 
-      {/* Hole header */}
-      <View style={styles.holeHeader}>
-        <View>
-          <Text style={styles.holeNumber}>Hole {hole.hole}</Text>
-          <Text style={styles.holeMeta}>
-            {formatDistance(hole.length, units)} · Par {hole.par}
-          </Text>
-        </View>
-      </View>
-
-      {/* Your Par stats */}
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{hole.myPar}</Text>
-          <Text style={styles.statLabel}>Your Par</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{hole.myGIR}</Text>
-          <Text style={styles.statLabel}>Shots to green</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>
-            {formatDistance(hole.avgShot, units)}
-          </Text>
-          <Text style={styles.statLabel}>Avg shot</Text>
-        </View>
-      </View>
-
-      {/* Strategy section */}
-      {strategy && strategy.path && strategy.path.length > 0 ? (
-        <View style={styles.strategySection}>
-          <Text style={styles.sectionTitle}>Your strategy</Text>
-
-          {/* WIR callout if active */}
-          {useWedgeRegulation && strategy.path.length > 1 && (
-            <View style={styles.wirCallout}>
-              <Text style={styles.wirCalloutText}>
-                Planned to leave a full wedge into the green
-              </Text>
-            </View>
-          )}
-
-          {/* Shot cards */}
-          {strategy.path.map((shot, i) => (
-            <ShotCard key={i} shot={shot} index={i} units={units} />
-          ))}
-
-          {/* Final shot label */}
-          <View style={styles.greenIndicator}>
-            <View style={styles.greenDot} />
-            <Text style={styles.greenLabel}>Green</Text>
-          </View>
-
-          {/* Delta callout */}
-          <View style={[
-            styles.deltaCard,
-            girDelta > 0 && styles.deltaCardPositive,
-            girDelta < 0 && styles.deltaCardNegative,
-          ]}>
-            <Text style={styles.deltaText}>
-              {girDelta > 0
-                ? `You reach the green ${girDelta} shot${girDelta > 1 ? 's' : ''} inside your plan. You have buffer — use it wisely.`
-                : girDelta === 0
-                  ? 'You reach the green right on plan. Stay disciplined and two-putt.'
-                  : `This hole is tight. Stay patient and avoid compounding errors.`}
-            </Text>
-          </View>
-        </View>
-      ) : (
-        <View style={styles.strategySection}>
-          <Text style={styles.sectionTitle}>Your strategy</Text>
-          <Text style={styles.noStrategyText}>
-            Set your club distances to get a strategy for this hole.
-          </Text>
-        </View>
-      )}
-
-      {/* Footer tip */}
-      <View style={styles.footerTip}>
-        <Text style={styles.footerTipText}>
-          If you find trouble, take your medicine and get back in play. One bad
-          swing doesn't mean the hole is lost.
-        </Text>
-      </View>
-
-    </ScrollView>
+      {/* Swipe hint — fades out after 2 s */}
+      <Animated.View
+        style={[styles.swipeHint, { opacity: swipeHintOpacity }]}
+        pointerEvents="none"
+      >
+        <Text style={styles.swipeHintText}>← Swipe to change hole →</Text>
+      </Animated.View>
+    </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: Colors.light.background,
+  },
+  page: {
     flex: 1,
     backgroundColor: Colors.light.background,
   },
@@ -452,6 +678,17 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
+  // Strategy disclaimer
+  strategyDisclaimer: {
+    fontSize: 12,
+    fontWeight: '400',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    lineHeight: 18,
+    marginTop: spacing.m,
+    fontStyle: 'italic',
+  },
+
   // No strategy
   noStrategyText: {
     fontSize: 15,
@@ -459,6 +696,125 @@ const styles = StyleSheet.create({
     fontFamily: typography.body.fontFamily,
     color: Colors.light.textSecondary,
     lineHeight: 22,
+  },
+
+  // Score section
+  scoreSection: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    padding: spacing.m,
+    marginBottom: spacing.l,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  scoreSectionTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.m,
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  parShortcut: {
+    alignItems: 'center',
+    backgroundColor: Colors.light.background,
+    borderRadius: 10,
+    paddingVertical: spacing.s,
+    paddingHorizontal: spacing.m,
+    borderWidth: 1.5,
+    borderColor: Colors.light.border,
+    minWidth: 84,
+  },
+  parShortcutActive: {
+    borderColor: Colors.light.primary,
+    backgroundColor: Colors.light.primarySoft,
+  },
+  parShortcutLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  parShortcutLabelActive: {
+    color: Colors.light.primary,
+  },
+  parShortcutValue: {
+    fontSize: 30,
+    fontWeight: '700',
+    fontFamily: typography.titleXL.fontFamily,
+    color: Colors.light.text,
+    marginTop: 2,
+  },
+  parShortcutValueActive: {
+    color: Colors.light.primary,
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.s,
+  },
+  stepBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: Colors.light.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBtnDisabled: {
+    backgroundColor: Colors.light.border,
+  },
+  stepBtnText: {
+    fontSize: 24,
+    fontWeight: '400',
+    color: '#FFFFFF',
+    lineHeight: 30,
+  },
+  scoreDisplay: {
+    alignItems: 'center',
+    minWidth: 48,
+  },
+  scoreDisplayText: {
+    fontSize: 34,
+    fontWeight: '700',
+    fontFamily: typography.titleXL.fontFamily,
+    color: Colors.light.text,
+  },
+  scoreDelta: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: typography.meta.fontFamily,
+    marginTop: 1,
+  },
+
+  // Swipe hint overlay
+  swipeHint: {
+    position: 'absolute',
+    bottom: 100,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  swipeHintText: {
+    fontSize: 13,
+    fontWeight: '500',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    backgroundColor: Colors.light.card,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: Colors.light.border,
   },
 
   // Footer tip

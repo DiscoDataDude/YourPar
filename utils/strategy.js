@@ -1,5 +1,5 @@
 // utils/strategy.js
-export function calculateMyPar(course, targetScore) {
+export function calculateYourPar(course, targetScore) {
   const coursePar = course.holes.reduce((sum, h) => sum + h.par, 0);
   const extra = targetScore - coursePar;
   const numHoles = course.holes.length;
@@ -14,14 +14,14 @@ export function calculateMyPar(course, targetScore) {
     let added = baseAdd;
     if (i < remainder) added += 1;
 
-    const myPar = hole.par + added;
-    const myGIR = myPar - 2;
-    const avgShot = Math.round(hole.length / myGIR / 10) * 10;
+    const yourPar = hole.par + added;
+    const yourGIR = yourPar - 2;
+    const avgShot = Math.round(hole.length / yourGIR / 10) * 10;
 
     return {
       ...hole,
-      myPar,
-      myGIR,
+      yourPar,
+      yourGIR,
       avgShot,
     };
   });

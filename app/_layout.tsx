@@ -26,14 +26,14 @@ export default function RootLayout() {
       <Stack.Screen
         name="par-card"
         options={{
-          title: 'My Par Card',
+          title: 'Your Par Card',
           headerRight: () => <HomeButton />,
         }}
       />
       <Stack.Screen
         name="hole"
         options={{
-          title: 'Hole Strategy',
+          title: 'Round',
           headerRight: () => <HomeButton />,
         }}
       />

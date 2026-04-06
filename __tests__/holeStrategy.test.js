@@ -16,11 +16,11 @@ describe('buildHoleStrategy', () => {
 
   test('returns a stable GIR-first plan when GIR is realistic', () => {
     const holeLength = 300;
-    const myGIR = 3;
+    const yourGIR = 3;
 
     const res = buildHoleStrategy(
       holeLength,
-      myGIR,
+      yourGIR,
       clubs,
       '7i', // favourite club
       'GW', // favourite wedge
@@ -28,22 +28,22 @@ describe('buildHoleStrategy', () => {
     );
 
     expect(res).not.toBeNull();
-    expect(res.shotsToGreen).toBeLessThanOrEqual(myGIR);
+    expect(res.shotsToGreen).toBeLessThanOrEqual(yourGIR);
     expect(res.path.length).toBe(res.shotsToGreen);
 
     // Tripwire assertions (not too brittle)
     expect(res.path[0].name).toBe('7i');
     expect(res.path.every((s) => typeof s.effective === 'number')).toBe(true);
-    expect(res.delta).toBe(myGIR - res.shotsToGreen);
+    expect(res.delta).toBe(yourGIR - res.shotsToGreen);
   });
 
   test('does not allow silly long-club partials under 60%', () => {
     const holeLength = 50;
-    const myGIR = 1;
+    const yourGIR = 1;
 
     const res = buildHoleStrategy(
       holeLength,
-      myGIR,
+      yourGIR,
       clubs,
       'Driver',
       null,

@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { calculateMyPar } from '../utils/strategy';
+import { calculateYourPar } from '../utils/strategy';
 import { getActiveCourse } from '../utils/courseUtils';
 import { typography } from '../constants/ui';
 import { getDistanceUnits, formatDistance } from '../utils/distanceUnits';
@@ -87,10 +87,10 @@ export default function ParCardScreen() {
       : Math.round(fullTarget * (filteredPar / fullCoursePar));
 
   const filteredCourse = { ...course, holes: filteredCourseHoles };
-  const holes = calculateMyPar(filteredCourse, scaledTarget);
+  const holes = calculateYourPar(filteredCourse, scaledTarget);
 
-  // Calculate "My Course Par"
-  const myCoursePar = holes.reduce((sum, h) => sum + h.myPar, 0);
+  // Calculate "Your Course Par"
+  const yourCoursePar = holes.reduce((sum, h) => sum + h.yourPar, 0);
 
   const rangeLabel =
     range === 'front'
@@ -106,7 +106,7 @@ export default function ParCardScreen() {
   const holesEntered = enteredHoles.length;
   const totalDelta = enteredHoles.reduce((sum, h) => {
     const s = parseStrokes(strokes[h.hole]);
-    return sum + (s - h.myPar);
+    return sum + (s - h.yourPar);
   }, 0);
 
   const handleUpdateStrokes = (holeNum, value) => {
@@ -147,15 +147,15 @@ export default function ParCardScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       {/* Title */}
-      <Text style={styles.title}>My Par Card</Text>
+      <Text style={styles.title}>Your Par Card</Text>
       <Text style={styles.courseName}>
         Course: {course.name || 'Burns Club'}
         {rangeLabel}
       </Text>
-      <Text style={styles.subtitle}>My Course Par: {myCoursePar}</Text>
+      <Text style={styles.subtitle}>Your Course Par: {yourCoursePar}</Text>
 
       <Text style={styles.helperText}>
-        My Par shows how many shots you are allowed on each hole to reach your
+        Your Par shows how many shots you are allowed on each hole to reach your
         goal — not the course par. Tap a hole number for strategy.
       </Text>
 
@@ -165,7 +165,7 @@ export default function ParCardScreen() {
           Hole
         </Text>
         <Text style={[styles.headerCell, styles.headerText, { flex: 0.7 }]}>
-          My Par
+          Your Par
         </Text>
         <Text style={[styles.headerCell, styles.headerText, { flex: 0.5 }]}>
           GIR
@@ -192,8 +192,8 @@ export default function ParCardScreen() {
                 router.push({
                   pathname: '/hole',
                   params: {
-                    holeNumber: item.hole,
-                    targetScore: scaledTarget,
+                    startIndex: holes.indexOf(item),
+                    targetScore: fullTarget,
                     holeRange: range,
                   },
                 });
@@ -201,7 +201,7 @@ export default function ParCardScreen() {
             >
               <Text style={[styles.cell, styles.holeLink]}>{item.hole}</Text>
             </Pressable>
-            <Text style={[styles.cell, { flex: 0.7 }]}>{item.myPar}</Text>
+            <Text style={[styles.cell, { flex: 0.7 }]}>{item.yourPar}</Text>
             <Text style={[styles.cell, { flex: 0.5 }]}>{item.myGIR}</Text>
             <Text style={[styles.cell, { flex: 0.8 }]}>
               {formatDistance(item.avgShot, units)}

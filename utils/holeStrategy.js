@@ -16,7 +16,7 @@ function getValidClubs(clubs) {
 
 function chooseBaseClub(
   remaining,
-  myGIR,
+  yourGIR,
   shotNumber,
   clubs,
   favouriteName,
@@ -29,7 +29,7 @@ function chooseBaseClub(
     ? validClubs.find((c) => c.name === favouriteName)
     : null;
 
-  const shotsLeft = Math.max(myGIR - shotNumber + 1, 1);
+  const shotsLeft = Math.max(yourGIR - shotNumber + 1, 1);
   const canReachInGIR = validClubs.filter(
     (c) => c.distance * shotsLeft >= remaining,
   );
@@ -84,13 +84,13 @@ function chooseBaseClub(
   return pool[pool.length - 1];
 }
 
-function planPath(targetDistance, myGIR, clubs, favouriteName, useWedgeRegulation) {
+function planPath(targetDistance, yourGIR, clubs, favouriteName, useWedgeRegulation) {
   const path = [];
   let remaining = targetDistance;
   let shotNumber = 1;
   const validClubs = getValidClubs(clubs);
 
-  const maxShots = myGIR + 5;
+  const maxShots = yourGIR + 5;
 
   while (remaining > 0 && shotNumber <= maxShots) {
     // Driver is only allowed on the tee shot (shot 1)
@@ -101,7 +101,7 @@ function planPath(targetDistance, myGIR, clubs, favouriteName, useWedgeRegulatio
 
     const club = chooseBaseClub(
       remaining,
-      myGIR,
+      yourGIR,
       shotNumber,
       availableClubs,
       favouriteName,
@@ -131,9 +131,9 @@ function planPath(targetDistance, myGIR, clubs, favouriteName, useWedgeRegulatio
   return { path, remaining };
 }
 
-function girIsRealistic(path, remaining, myGIR) {
+function girIsRealistic(path, remaining, yourGIR) {
   if (!path || path.length === 0) return false;
-  if (path.length > myGIR) return false;
+  if (path.length > yourGIR) return false;
   if (remaining > 5) return false;
 
   for (const shot of path) {
@@ -155,12 +155,12 @@ function girIsRealistic(path, remaining, myGIR) {
 function buildDescription(
   path,
   holeLength,
-  myGIR,
+  yourGIR,
   units = 'meters',
   finalLabelOverride = null,
 ) {
   const shotsToGreen = path.length;
-  const delta = myGIR - shotsToGreen;
+  const delta = yourGIR - shotsToGreen;
   let description = '';
 
   let distLeft = holeLength;
@@ -207,7 +207,7 @@ function buildDescription(
 
 export function buildHoleStrategy(
   holeLength,
-  myGIR,
+  yourGIR,
   clubs,
   favouriteClub,
   favouriteWedge,
@@ -217,15 +217,15 @@ export function buildHoleStrategy(
   const validClubs = getValidClubs(clubs);
   if (validClubs.length === 0) return null;
 
-  const gir = planPath(holeLength, myGIR, clubs, favouriteClub, useWedgeRegulation);
-  const girRealistic = girIsRealistic(gir.path, gir.remaining, myGIR);
+  const gir = planPath(holeLength, yourGIR, clubs, favouriteClub, useWedgeRegulation);
+  const girRealistic = girIsRealistic(gir.path, gir.remaining, yourGIR);
 
   if (girRealistic || !useWedgeRegulation) {
-    const description = buildDescription(gir.path, holeLength, myGIR, units);
+    const description = buildDescription(gir.path, holeLength, yourGIR, units);
     return {
       path: gir.path,
       shotsToGreen: gir.path.length,
-      delta: myGIR - gir.path.length,
+      delta: yourGIR - gir.path.length,
       description,
     };
   }
@@ -254,7 +254,7 @@ export function buildHoleStrategy(
     if (wedgeDist >= holeLength) continue;
 
     const targetLength = holeLength - wedgeDist;
-    const wirGIR = Math.max(myGIR - 1, 1);
+    const wirGIR = Math.max(yourGIR - 1, 1);
 
     const attempt = planPath(targetLength, wirGIR, clubs, favouriteClub, true);
     const progress = (targetLength - attempt.remaining) / targetLength;
@@ -276,7 +276,7 @@ export function buildHoleStrategy(
         buildDescription(
           fullPath,
           holeLength,
-          myGIR,
+          yourGIR,
           units,
           'to get it on the green with your wedge',
         );
@@ -284,17 +284,17 @@ export function buildHoleStrategy(
       return {
         path: fullPath,
         shotsToGreen: fullPath.length,
-        delta: myGIR - fullPath.length,
+        delta: yourGIR - fullPath.length,
         description,
       };
     }
   }
 
-  const description = buildDescription(gir.path, holeLength, myGIR, units);
+  const description = buildDescription(gir.path, holeLength, yourGIR, units);
   return {
     path: gir.path,
     shotsToGreen: gir.path.length,
-    delta: myGIR - gir.path.length,
+    delta: yourGIR - gir.path.length,
     description,
   };
 }
