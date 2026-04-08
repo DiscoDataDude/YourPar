@@ -47,6 +47,26 @@ describe('normaliseOsmCourse — Belconnen', () => {
     expect(indices).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
   });
 
+  test('stroke index is ranked by avg shot length (length / (par-2)), not raw length', () => {
+    // Index 1 must have the highest avg-shot-length; index 18 the lowest.
+    // A par 5 must not automatically beat a short par 3 just because it's longer.
+    const withAvg = course.holes.map((h) => ({
+      hole: h.hole,
+      index: h.index,
+      avg: h.length / Math.max(h.par - 2, 1),
+    }));
+
+    const idx1 = withAvg.find((h) => h.index === 1);
+    const idx18 = withAvg.find((h) => h.index === 18);
+    expect(idx1.avg).toBeGreaterThan(idx18.avg);
+
+    // Every hole with a lower index should have a higher or equal avg shot length
+    const sorted = [...withAvg].sort((a, b) => a.index - b.index);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      expect(sorted[i].avg).toBeGreaterThanOrEqual(sorted[i + 1].avg - 0.01);
+    }
+  });
+
   test('practice hole (no ref) is filtered out', () => {
     // OSM way 951442191 has golf=hole but no ref — must not appear
     expect(course.holes).toHaveLength(18);

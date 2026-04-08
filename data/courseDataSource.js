@@ -12,8 +12,14 @@ import * as turf from '@turf/turf';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+// Mirrors tried in order. If one returns 5xx or times out we fall through.
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
 const DISCOVER_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const OVERPASS_TIMEOUT_MS = 20000; // 20 s per mirror attempt
 
 // ─── low-level geometry helpers ───────────────────────────────────────────────
 
@@ -254,10 +260,20 @@ export function normaliseOsmCourse(overpassData, osmSummary) {
     });
   }
 
-  // ── 9. Assign stroke index — longest hole = 1, shortest = 18 ────────────────
-  [...holes].sort((a, b) => b.length - a.length).forEach((h, i) => {
-    h.index = i + 1;
-  });
+  // ── 9. Assign stroke index — hardest average shot = index 1 ─────────────────
+  // Use length / (par - 2) as the difficulty proxy: this is the average
+  // distance per shot to the green. A par 5 is long but you get 3 shots to
+  // the green, so it may be easier per-shot than a short but tight par 3.
+  // Guard against par ≤ 2 (shouldn't exist, but divide-by-zero safe).
+  [...holes]
+    .sort((a, b) => {
+      const girA = Math.max((a.par ?? 4) - 2, 1);
+      const girB = Math.max((b.par ?? 4) - 2, 1);
+      return b.length / girB - a.length / girA;
+    })
+    .forEach((h, i) => {
+      h.index = i + 1;
+    });
 
   // ── 10. Build Course ─────────────────────────────────────────────────────────
   const { osmType, osmId, name, location, bbox, tags = {} } = osmSummary;
@@ -283,16 +299,51 @@ export function normaliseOsmCourse(overpassData, osmSummary) {
 // ─── network helpers ──────────────────────────────────────────────────────────
 
 async function postOverpass(query) {
-  const response = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Overpass ${response.status}: ${text.slice(0, 200)}`);
+  let lastError;
+
+  for (const mirror of OVERPASS_MIRRORS) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+
+      let response;
+      try {
+        response = await fetch(mirror, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `data=${encodeURIComponent(query)}`,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // 5xx → try next mirror; 4xx → fail immediately (bad query, not server issue)
+      if (response.status >= 500) {
+        const text = await response.text().catch(() => '');
+        lastError = new Error(`Overpass ${response.status} from ${mirror}: ${text.slice(0, 120)}`);
+        console.warn('[courseDataSource] mirror failed, trying next:', mirror, response.status);
+        continue;
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`Overpass ${response.status}: ${text.slice(0, 200)}`);
+      }
+
+      return response.json();
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        lastError = new Error(`Overpass timeout on ${mirror}`);
+        console.warn('[courseDataSource] mirror timed out, trying next:', mirror);
+        continue;
+      }
+      // Network error (no connectivity etc.) — try next mirror
+      lastError = e;
+      console.warn('[courseDataSource] mirror error, trying next:', mirror, e.message);
+    }
   }
-  return response.json();
+
+  throw lastError ?? new Error('All Overpass mirrors failed');
 }
 
 // ─── discoverNearby ───────────────────────────────────────────────────────────
@@ -303,43 +354,58 @@ async function postOverpass(query) {
  *
  * @param {number} lat
  * @param {number} lng
- * @param {number} [radiusM=25000]
+ * @param {number} [radiusM=50000]
  * @returns {Promise<CourseSummary[]>}
  */
-export async function discoverNearby(lat, lng, radiusM = 25000) {
+export async function discoverNearby(lat, lng, radiusM = 50000, forceRefresh = false) {
   const rLat = Math.round(lat * 100) / 100;
   const rLng = Math.round(lng * 100) / 100;
-  const cacheKey = `discover:${rLat}:${rLng}`;
+  const cacheKey = `discover:${rLat}:${rLng}:${radiusM}`;
 
-  // Check cache
-  try {
-    const cached = await AsyncStorage.getItem(cacheKey);
-    if (cached) {
-      const { data, fetchedAt } = JSON.parse(cached);
-      if (Date.now() - new Date(fetchedAt).getTime() < DISCOVER_TTL_MS) {
-        return data;
+  // Check cache (skipped when forceRefresh is true)
+  if (!forceRefresh) {
+    try {
+      const cached = await AsyncStorage.getItem(cacheKey);
+      if (cached) {
+        const { data, fetchedAt } = JSON.parse(cached);
+        if (Date.now() - new Date(fetchedAt).getTime() < DISCOVER_TTL_MS) {
+          return data;
+        }
       }
+    } catch {
+      // Cache miss or corrupt — fall through to network
     }
-  } catch {
-    // Cache miss or corrupt — fall through to network
   }
 
+  // out bb; returns bounds (minlat/minlon/maxlat/maxlon) AND center for
+  // way/relation elements — giving us both the bbox needed for ingest and
+  // the centroid needed for distance sorting.
   const query =
     `[out:json][timeout:25];` +
     `(node["leisure"="golf_course"](around:${radiusM},${lat},${lng});` +
     `way["leisure"="golf_course"](around:${radiusM},${lat},${lng});` +
     `relation["leisure"="golf_course"](around:${radiusM},${lat},${lng});` +
-    `);out center;`;
+    `);out bb;`;
 
   const json = await postOverpass(query);
 
   const courses = json.elements
     .filter((e) => e.tags && e.tags.name)
     .map((e) => {
-      const center =
-        e.center ?? (e.type === 'node' ? { lat: e.lat, lon: e.lon } : null);
       const bounds = e.bounds;
+      // Nodes have lat/lon directly; ways/relations have center + bounds from `out bb;`
+      const center =
+        e.center ??
+        (e.type === 'node'
+          ? { lat: e.lat, lon: e.lon }
+          : bounds
+            ? {
+                lat: (bounds.minlat + bounds.maxlat) / 2,
+                lon: (bounds.minlon + bounds.maxlon) / 2,
+              }
+            : null);
       return {
+        id: `${e.type}/${e.id}`,
         osmType: e.type,
         osmId: e.id,
         name: e.tags.name,
