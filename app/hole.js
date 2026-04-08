@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import {
   distancesToClubsArray,
 } from '../utils/clubDistances';
 import { buildHoleStrategy } from '../utils/holeStrategy';
+import { recommendNextShot } from '../utils/recommendNextShot';
 import { getActiveCourse } from '../utils/courseUtils';
 import { typography, spacing } from '../constants/ui';
 import {
@@ -163,24 +164,28 @@ function ScoreStepper({ yourPar, score, onScoreChange }) {
   );
 }
 
-// ─── Green distances (live GPS) ───────────────────────────────────────────────
+// ─── Next shot panel (live GPS) ───────────────────────────────────────────────
 
 /**
- * Displays live distance to front / centre / back of green.
- * Handles three states: no green data, no GPS fix yet, GPS active.
+ * Shows distance to front/centre/back + a live club recommendation.
+ * States: no green data (null), waiting for GPS fix, GPS active.
  */
-function GreenDistances({ hole, userLocation }) {
-  // No green data on this hole — silent no-op
+function NextShotPanel({ hole, userLocation, clubs, prefs, fallbackShot }) {
   if (!hole.green) return null;
 
   if (!userLocation) {
     return (
       <View style={styles.gpsSection}>
-        <Text style={styles.gpsSectionTitle}>Distance to green</Text>
+        <Text style={styles.gpsSectionTitle}>Next shot</Text>
         <View style={styles.gpsWaiting}>
           <ActivityIndicator size="small" color={Colors.light.primary} />
           <Text style={styles.gpsWaitingText}>Waiting for GPS…</Text>
         </View>
+        {fallbackShot && (
+          <Text style={styles.gpsFallback}>
+            From the tee: {fallbackShot.partial ? `${fallbackShot.pct}% ` : ''}{fallbackShot.name}
+          </Text>
+        )}
       </View>
     );
   }
@@ -193,9 +198,30 @@ function GreenDistances({ hole, userLocation }) {
   const dFront  = distToPoint(hole.green.front);
   const dBack   = distToPoint(hole.green.back);
 
+  const rec = clubs.length > 0
+    ? recommendNextShot(dCentre, clubs, prefs)
+    : null;
+
+  let recLine = null;
+  if (rec) {
+    if (rec.type === 'putt') {
+      recLine = "You're on the green — putt it out";
+    } else if (rec.type === 'far') {
+      recLine = 'Are you on this hole?';
+    } else if (rec.type === 'layup') {
+      recLine = `${rec.club} — leaves ~${rec.leave}m for a full ${rec.wedge}`;
+    } else if (rec.type === 'go') {
+      recLine = rec.partial
+        ? `${rec.pct}% ${rec.club}`
+        : `${rec.club} — full swing`;
+    }
+  }
+
   return (
     <View style={styles.gpsSection}>
-      <Text style={styles.gpsSectionTitle}>Distance to green</Text>
+      <Text style={styles.gpsSectionTitle}>Next shot</Text>
+
+      {/* Distances row */}
       <View style={styles.gpsRow}>
         <View style={styles.gpsStat}>
           <Text style={styles.gpsValue}>{dFront}m</Text>
@@ -212,6 +238,14 @@ function GreenDistances({ hole, userLocation }) {
           <Text style={styles.gpsLabel}>Back</Text>
         </View>
       </View>
+
+      {/* Recommendation */}
+      {recLine && (
+        <View style={styles.gpsRecRow}>
+          <Text style={styles.gpsRecArrow}>→</Text>
+          <Text style={styles.gpsRecText}>{recLine}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -231,6 +265,8 @@ export default function HoleScreen() {
   const [holes, setHoles] = useState([]);
   const [strategies, setStrategies] = useState({});
   const [scores, setScores] = useState({});
+  const [clubsArr, setClubsArr] = useState([]);
+  const [clubPrefs, setClubPrefs] = useState({});
   const [loading, setLoading] = useState(true);
   const [units, setUnits] = useState('meters');
   const [useWedgeRegulation, setUseWedgeRegulation] = useState(true);
@@ -310,20 +346,22 @@ export default function HoleScreen() {
 
         const stored = JSON.parse(json);
         const normalised = normaliseClubDistances(stored);
-        const clubsArr = distancesToClubsArray(normalised.distances);
+        const loadedClubs = distancesToClubsArray(normalised.distances);
         const { favouriteClub, favouriteWedge, useWedgeRegulation: useWIR } =
           normalised;
 
         if (!mounted) return;
         setUseWedgeRegulation(useWIR);
+        setClubsArr(loadedClubs);
+        setClubPrefs({ favouriteClub, favouriteWedge, useWedgeRegulation: useWIR });
 
-        if (clubsArr.length > 0) {
+        if (loadedClubs.length > 0) {
           const map = {};
           for (const h of allHoles) {
             map[h.hole] = buildHoleStrategy(
               h.length,
               h.yourGIR,
-              clubsArr,
+              loadedClubs,
               favouriteClub,
               favouriteWedge,
               useWIR,
@@ -452,50 +490,78 @@ export default function HoleScreen() {
           </View>
 
 
-          {/* Strategy */}
-          {strategy && strategy.path && strategy.path.length > 0 ? (
-            <View style={styles.strategySection}>
-              <Text style={styles.sectionTitle}>Your strategy</Text>
-              {useWedgeRegulation && strategy.path.length > 1 && (
-                <View style={styles.wirCallout}>
-                  <Text style={styles.wirCalloutText}>
-                    Planned to leave a full wedge into the green
+          {/* Strategy — compact plan for GPS holes, full path for non-GPS */}
+          {hole.green ? (
+            // GPS course: show the static plan summary only (live caddie panel
+            // shown outside the FlatList handles the shot-by-shot advice)
+            strategy && strategy.path && strategy.path.length > 0 ? (
+              <View style={styles.strategySection}>
+                <Text style={styles.sectionTitle}>The plan</Text>
+                <View style={styles.planSummaryCard}>
+                  <Text style={styles.planSummaryText}>
+                    {strategy.path.map((s) =>
+                      s.partial ? `${s.pct}% ${s.name}` : s.name
+                    ).join(' → ')} → green
+                  </Text>
+                  <Text style={styles.strategyDisclaimer}>
+                    Set before the hole. The live caddie above updates as you play.
                   </Text>
                 </View>
-              )}
-              {strategy.path.map((shot, i) => (
-                <ShotCard key={i} shot={shot} index={i} units={units} />
-              ))}
-              <View style={styles.greenIndicator}>
-                <View style={styles.greenDot} />
-                <Text style={styles.greenLabel}>Green</Text>
               </View>
-              <View
-                style={[
-                  styles.deltaCard,
-                  girDelta > 0 && styles.deltaCardPositive,
-                  girDelta < 0 && styles.deltaCardNegative,
-                ]}
-              >
-                <Text style={styles.deltaText}>
-                  {girDelta > 0
-                    ? `You reach the green ${girDelta} shot${girDelta > 1 ? 's' : ''} inside your plan. You have buffer — use it wisely.`
-                    : girDelta === 0
-                      ? 'You reach the green right on plan. Stay disciplined and two-putt.'
-                      : 'This hole is tight. Stay patient and avoid compounding errors.'}
+            ) : (
+              <View style={styles.strategySection}>
+                <Text style={styles.sectionTitle}>The plan</Text>
+                <Text style={styles.noStrategyText}>
+                  Set your club distances to get a plan for this hole.
                 </Text>
               </View>
-              <Text style={styles.strategyDisclaimer}>
-                Strategy assumes flat terrain and no wind. Club up for uphill shots or into a strong headwind, and down for downhill or downwind.
-              </Text>
-            </View>
+            )
           ) : (
-            <View style={styles.strategySection}>
-              <Text style={styles.sectionTitle}>Your strategy</Text>
-              <Text style={styles.noStrategyText}>
-                Set your club distances to get a strategy for this hole.
-              </Text>
-            </View>
+            // Non-GPS course: full multi-shot strategy view
+            strategy && strategy.path && strategy.path.length > 0 ? (
+              <View style={styles.strategySection}>
+                <Text style={styles.sectionTitle}>Your strategy</Text>
+                {useWedgeRegulation && strategy.path.length > 1 && (
+                  <View style={styles.wirCallout}>
+                    <Text style={styles.wirCalloutText}>
+                      Planned to leave a full wedge into the green
+                    </Text>
+                  </View>
+                )}
+                {strategy.path.map((shot, i) => (
+                  <ShotCard key={i} shot={shot} index={i} units={units} />
+                ))}
+                <View style={styles.greenIndicator}>
+                  <View style={styles.greenDot} />
+                  <Text style={styles.greenLabel}>Green</Text>
+                </View>
+                <View
+                  style={[
+                    styles.deltaCard,
+                    girDelta > 0 && styles.deltaCardPositive,
+                    girDelta < 0 && styles.deltaCardNegative,
+                  ]}
+                >
+                  <Text style={styles.deltaText}>
+                    {girDelta > 0
+                      ? `You reach the green ${girDelta} shot${girDelta > 1 ? 's' : ''} inside your plan. You have buffer — use it wisely.`
+                      : girDelta === 0
+                        ? 'You reach the green right on plan. Stay disciplined and two-putt.'
+                        : 'This hole is tight. Stay patient and avoid compounding errors.'}
+                  </Text>
+                </View>
+                <Text style={styles.strategyDisclaimer}>
+                  Strategy assumes flat terrain and no wind. Club up for uphill shots or into a strong headwind, and down for downhill or downwind.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.strategySection}>
+                <Text style={styles.sectionTitle}>Your strategy</Text>
+                <Text style={styles.noStrategyText}>
+                  Set your club distances to get a strategy for this hole.
+                </Text>
+              </View>
+            )
           )}
 
           {/* Score entry */}
@@ -554,9 +620,15 @@ export default function HoleScreen() {
         style={{ flex: 1 }}
       />
 
-      {/* Live distance panel — always for the currently visible hole */}
+      {/* Live next-shot panel — always for the currently visible hole */}
       {currentHole && (
-        <GreenDistances hole={currentHole} userLocation={userLocation} />
+        <NextShotPanel
+          hole={currentHole}
+          userLocation={userLocation}
+          clubs={clubsArr}
+          prefs={clubPrefs}
+          fallbackShot={strategies[currentHole.hole]?.path?.[0] ?? null}
+        />
       )}
 
       {/* Swipe hint — fades out after 2 s */}
@@ -1002,5 +1074,50 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.light.textSecondary,
     fontFamily: typography.body.fontFamily,
+  },
+  gpsFallback: {
+    fontSize: 13,
+    color: Colors.light.textSecondary,
+    fontFamily: typography.meta.fontFamily,
+    textAlign: 'center',
+    marginTop: spacing.s,
+    paddingBottom: spacing.s,
+  },
+  gpsRecRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.s,
+    marginTop: spacing.m,
+    paddingTop: spacing.m,
+    borderTopWidth: 1,
+    borderTopColor: Colors.light.border,
+  },
+  gpsRecArrow: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#4A8C5C',
+  },
+  gpsRecText: {
+    fontSize: 20,
+    fontWeight: '700',
+    fontFamily: typography.titleM.fontFamily,
+    color: Colors.light.text,
+  },
+
+  // Static plan summary (GPS holes)
+  planSummaryCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 10,
+    padding: spacing.m,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  planSummaryText: {
+    fontSize: 15,
+    fontWeight: '500',
+    fontFamily: typography.body.fontFamily,
+    color: Colors.light.text,
+    marginBottom: spacing.s,
   },
 });
