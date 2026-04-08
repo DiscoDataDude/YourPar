@@ -1,5 +1,7 @@
 import { Stack, router } from 'expo-router';
+import { useEffect } from 'react';
 import { TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { runMigrations } from '../utils/migrations';
 
 function HomeButton() {
   return (
@@ -13,6 +15,10 @@ function HomeButton() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    runMigrations();
+  }, []);
+
   return (
     <Stack screenOptions={{ headerShown: true }}>
       <Stack.Screen name="index" options={{ title: 'YourPar' }} />

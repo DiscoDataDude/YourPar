@@ -42,8 +42,10 @@ export default function CourseSelectScreen() {
   const useDemoCourse = async () => {
     setLoading(true);
     try {
-      // Save Burns Club as the active course
       const demoCourse = {
+        id: 'demo/burns',
+        source: 'demo',
+        schemaVersion: 1,
         name: burnsClub.courseName,
         holes: burnsClub.holes,
       };
@@ -68,10 +70,10 @@ export default function CourseSelectScreen() {
     }
   };
 
-  const deleteCourse = async (courseName) => {
-    setDeleting(courseName);
+  const deleteCourse = async (id) => {
+    setDeleting(id);
     try {
-      await deleteSavedCourse(courseName);
+      await deleteSavedCourse(id);
       await loadSavedCourses();
     } catch (e) {
       console.error('Error deleting course:', e);
@@ -114,7 +116,7 @@ export default function CourseSelectScreen() {
           <Text style={styles.sectionTitle}>My Saved Courses</Text>
           <FlatList
             data={savedCourses}
-            keyExtractor={(item, idx) => `${item.name}-${idx}`}
+            keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
               <View style={styles.courseRow}>
                 <TouchableOpacity
@@ -128,8 +130,8 @@ export default function CourseSelectScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.deleteButton}
-                  onPress={() => deleteCourse(item.name)}
-                  disabled={deleting === item.name}
+                  onPress={() => deleteCourse(item.id)}
+                  disabled={deleting === item.id}
                 >
                   {deleting === item.name ? (
                     <ActivityIndicator size="small" />

@@ -73,14 +73,14 @@ export async function getSavedCourses() {
 
 /**
  * Add a course to the saved courses list
- * If a course with the same name exists, it will be replaced
+ * If a course with the same id exists, it will be replaced
  */
 export async function addSavedCourse(course) {
   try {
     const saved = await getSavedCourses();
 
-    // Remove existing course with same name if present
-    const filtered = saved.filter((c) => c.name !== course.name);
+    // Remove existing course with same id if present
+    const filtered = saved.filter((c) => c.id !== course.id);
 
     // Add new course
     filtered.push(course);
@@ -96,12 +96,12 @@ export async function addSavedCourse(course) {
 }
 
 /**
- * Delete a saved course by name
+ * Delete a saved course by id
  */
-export async function deleteSavedCourse(courseName) {
+export async function deleteSavedCourse(id) {
   try {
     const saved = await getSavedCourses();
-    const filtered = saved.filter((c) => c.name !== courseName);
+    const filtered = saved.filter((c) => c.id !== id);
     await AsyncStorage.setItem(
       STORAGE_KEY_SAVED_COURSES,
       JSON.stringify(filtered),
