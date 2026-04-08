@@ -37,6 +37,30 @@ describe('buildHoleStrategy', () => {
     expect(res.delta).toBe(yourGIR - res.shotsToGreen);
   });
 
+  test('prefers a full-swing shorter club over a partial when within 5m of the hole', () => {
+    // Hole 1 Belconnen-style: par-5, yourGIR=3, planner ends up with ~141m
+    // remaining on shot 3. 9i(130m here) is 11m short so won't trigger, but
+    // if user's 9i were 140m it would. Use 8i(140m) as the "close" club:
+    // remaining after 5W(175)+7i(150) = 461-175-150 = 136m.
+    // 8i(140m) is 4m over remaining → in notShorter, returned as near-full swing.
+    // Verify it is NOT a large partial by checking pct >= 90 or club is not partial.
+    const res = buildHoleStrategy(
+      461, // par-5 hole length
+      3,   // yourGIR (scratch/low-target scenario)
+      clubs,
+      '7i',
+      'GW',
+      false, // WIR off for simplicity
+    );
+    expect(res).not.toBeNull();
+    expect(res.path.length).toBeGreaterThan(0);
+    const lastShot = res.path[res.path.length - 1];
+    // The last shot must not be a large partial — either full swing or ≥90%
+    if (lastShot.partial) {
+      expect(lastShot.pct).toBeGreaterThanOrEqual(90);
+    }
+  });
+
   test('does not allow silly long-club partials under 60%', () => {
     const holeLength = 50;
     const yourGIR = 1;

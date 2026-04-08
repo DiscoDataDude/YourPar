@@ -79,7 +79,19 @@ function chooseBaseClub(
     .filter((c) => c.distance >= remaining)
     .sort((a, b) => a.distance - b.distance);
 
-  if (notShorter.length > 0) return notShorter[0];
+  if (notShorter.length > 0) {
+    // On the final approach shot, prefer a full-swing club that leaves ≤5m
+    // over a partial with a longer club. This avoids "7i@90%" when a 9i
+    // at full swing would reach to within 1–5m of the hole.
+    if (shotsLeft === 1) {
+      const GIR_GAP = 5;
+      const almostThere = pool
+        .filter((c) => c.distance < remaining && c.distance >= remaining - GIR_GAP)
+        .sort((a, b) => b.distance - a.distance); // longest first
+      if (almostThere.length > 0) return almostThere[0];
+    }
+    return notShorter[0];
+  }
 
   return pool[pool.length - 1];
 }

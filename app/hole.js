@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
+import * as Location from 'expo-location';
+import * as turf from '@turf/turf';
 import { calculateYourPar } from '../utils/strategy';
 import {
   normaliseClubDistances,
@@ -27,6 +29,9 @@ import {
   getUnitLabel,
 } from '../utils/distanceUnits';
 import { Colors } from '../constants/theme';
+
+const GPS_THROTTLE_MS = 1000;   // max one UI update per second
+const GPS_MAX_ACCURACY_M = 20;  // discard fixes with error radius > 20 m
 
 const STORAGE_DISTANCES = 'clubDistances';
 const MIN_SCORE = 1;
@@ -158,6 +163,59 @@ function ScoreStepper({ yourPar, score, onScoreChange }) {
   );
 }
 
+// ─── Green distances (live GPS) ───────────────────────────────────────────────
+
+/**
+ * Displays live distance to front / centre / back of green.
+ * Handles three states: no green data, no GPS fix yet, GPS active.
+ */
+function GreenDistances({ hole, userLocation }) {
+  // No green data on this hole — silent no-op
+  if (!hole.green) return null;
+
+  if (!userLocation) {
+    return (
+      <View style={styles.gpsSection}>
+        <Text style={styles.gpsSectionTitle}>Distance to green</Text>
+        <View style={styles.gpsWaiting}>
+          <ActivityIndicator size="small" color={Colors.light.primary} />
+          <Text style={styles.gpsWaitingText}>Waiting for GPS…</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const userPt = turf.point([userLocation.lng, userLocation.lat]);
+  const distToPoint = (pt) =>
+    Math.round(turf.distance(userPt, turf.point([pt.lng, pt.lat]), { units: 'meters' }));
+
+  const dCentre = distToPoint(hole.green.centre);
+  const dFront  = distToPoint(hole.green.front);
+  const dBack   = distToPoint(hole.green.back);
+
+  return (
+    <View style={styles.gpsSection}>
+      <Text style={styles.gpsSectionTitle}>Distance to green</Text>
+      <View style={styles.gpsRow}>
+        <View style={styles.gpsStat}>
+          <Text style={styles.gpsValue}>{dFront}m</Text>
+          <Text style={styles.gpsLabel}>Front</Text>
+        </View>
+        <View style={styles.gpsDivider} />
+        <View style={styles.gpsStat}>
+          <Text style={[styles.gpsValue, styles.gpsValueCentre]}>{dCentre}m</Text>
+          <Text style={styles.gpsLabel}>Centre</Text>
+        </View>
+        <View style={styles.gpsDivider} />
+        <View style={styles.gpsStat}>
+          <Text style={styles.gpsValue}>{dBack}m</Text>
+          <Text style={styles.gpsLabel}>Back</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function HoleScreen() {
@@ -178,8 +236,11 @@ export default function HoleScreen() {
   const [useWedgeRegulation, setUseWedgeRegulation] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(startIndex);
 
+  const [userLocation, setUserLocation] = useState(null);
+
   const flatListRef = useRef(null);
   const swipeHintOpacity = useRef(new Animated.Value(1)).current;
+  const lastGpsUpdate = useRef(0);
 
   // Fade-out swipe hint after 2 s
   useEffect(() => {
@@ -284,6 +345,47 @@ export default function HoleScreen() {
     };
   }, [target, range]);
 
+  // ── GPS subscription — only when at least one hole has green data ────────────
+  useEffect(() => {
+    const hasGreenData = holes.some((h) => h.green);
+    if (!hasGreenData) return;
+
+    let subscription = null;
+
+    async function subscribe() {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 3000,
+          distanceInterval: 5,
+        },
+        (position) => {
+          // Discard low-accuracy fixes to avoid jumpy readings
+          if (
+            position.coords.accuracy != null &&
+            position.coords.accuracy > GPS_MAX_ACCURACY_M
+          ) return;
+          const now = Date.now();
+          if (now - lastGpsUpdate.current < GPS_THROTTLE_MS) return;
+          lastGpsUpdate.current = now;
+          setUserLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+      );
+    }
+
+    subscribe();
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [holes]);
+
   const handleScoreChange = useCallback((holeNum, value) => {
     setScores((prev) => ({ ...prev, [holeNum]: value }));
   }, []);
@@ -348,6 +450,7 @@ export default function HoleScreen() {
               <Text style={styles.statLabel}>Avg shot</Text>
             </View>
           </View>
+
 
           {/* Strategy */}
           {strategy && strategy.path && strategy.path.length > 0 ? (
@@ -432,6 +535,8 @@ export default function HoleScreen() {
     );
   }
 
+  const currentHole = holes[currentIndex] ?? null;
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -446,8 +551,13 @@ export default function HoleScreen() {
         viewabilityConfig={viewabilityConfig}
         getItemLayout={getItemLayout}
         initialScrollIndex={startIndex}
-        style={styles.container}
+        style={{ flex: 1 }}
       />
+
+      {/* Live distance panel — always for the currently visible hole */}
+      {currentHole && (
+        <GreenDistances hole={currentHole} userLocation={userLocation} />
+      )}
 
       {/* Swipe hint — fades out after 2 s */}
       <Animated.View
@@ -829,5 +939,68 @@ const styles = StyleSheet.create({
     fontFamily: typography.meta.fontFamily,
     color: Colors.light.textSecondary,
     lineHeight: 20,
+  },
+
+  // GPS / green distance section — rendered outside FlatList, fixed at bottom
+  gpsSection: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 0,
+    paddingVertical: spacing.m,
+    paddingHorizontal: spacing.l,
+    borderTopWidth: 1,
+    borderColor: '#4A8C5C',
+  },
+  gpsSectionTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: typography.meta.fontFamily,
+    color: '#4A8C5C',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+    marginBottom: spacing.m,
+  },
+  gpsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  gpsStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  gpsValue: {
+    fontSize: 24,
+    fontWeight: '700',
+    fontFamily: typography.titleXL.fontFamily,
+    color: Colors.light.text,
+    marginBottom: 2,
+  },
+  gpsValueCentre: {
+    color: '#4A8C5C',
+  },
+  gpsLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    fontFamily: typography.meta.fontFamily,
+    color: Colors.light.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  gpsDivider: {
+    width: 1,
+    backgroundColor: Colors.light.border,
+    height: 36,
+  },
+  gpsWaiting: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.s,
+    paddingBottom: spacing.s,
+  },
+  gpsWaitingText: {
+    fontSize: 14,
+    color: Colors.light.textSecondary,
+    fontFamily: typography.body.fontFamily,
   },
 });
